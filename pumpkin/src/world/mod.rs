@@ -2076,6 +2076,9 @@ impl World {
             .init_player(player_id.clone())
             .await;
 
+        // Send all advancements to the player on join
+        player.send_all_advancements().await;
+
         player.has_played_before.store(true, Ordering::Relaxed);
         player
             .on_screen_handler_opened(player.player_screen_handler.clone())
