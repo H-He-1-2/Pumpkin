@@ -2495,16 +2495,72 @@ impl Player {
         }
     }
 
+    pub async fn send_all_advancements(&self) {
+        let server = match self.world().server.upgrade() {
+            Some(s) => s,
+            None => return,
+        };
+        
+        let player_id = self.gameprofile.id.to_string();
+        let state = server
+            .data
+            .advancement_manager
+            .get_player_state(&player_id)
+            .await;
+
+        // Get all vanilla advancements
+        let advancements = &server.data.advancement_manager.vanilla.advancements;
+        
+        // Build progress list from player's completed criteria
+        let mut progress = Vec::new();
+        if let Some(state) = &state {
+            for (key, criterion_progress) in &state.criteria {
+                if criterion_progress.achieved {
+                    // Extract advancement id and criterion from key (format: "advancement_id:criterion")
+                    if let Some(colon_pos) = key.find(':') {
+                        let adv_id = &key[..colon_pos];
+                        let criterion_id = &key[colon_pos + 1..];
+                        progress.push((adv_id.to_string(), Criteria::new(criterion_id)));
+                    }
+                }
+            }
+        }
+
+        // Send all advancements to the client
+        if let ClientPlatform::Java(java) = &self.client {
+            // First send reset=true to clear any existing data
+            java.enqueue_packet(&CUpdateAdvancements::new(
+                true,
+                advancements,
+                &[],
+                &[],
+            ))
+            .await;
+            
+            // Then send progress updates
+            if !progress.is_empty() {
+                java.enqueue_packet(&CUpdateAdvancements::new(
+                    false,
+                    &[],
+                    &[],
+                    &progress,
+                ))
+                .await;
+            }
+        }
+    }
+
     pub async fn grant_advancement(&self, advancement_id: &str, criterion: &str) {
         let server = self.world().server.upgrade().unwrap();
         let player_id = self.gameprofile.id.to_string();
 
-        if server
+        let (criterion_granted, advancement_completed) = server
             .data
             .advancement_manager
             .grant_criterion(&player_id, advancement_id, criterion)
-            .await
-        {
+            .await;
+
+        if criterion_granted {
             let progress = server
                 .data
                 .advancement_manager
@@ -2512,19 +2568,25 @@ impl Player {
                 .await;
 
             if let Some(state) = progress {
+                // Build progress list for this specific advancement
                 let criteria_list: Vec<(String, Criteria)> = state
                     .criteria
                     .iter()
-                    .filter(|(_, p)| p.achieved)
-                    .map(|(k, _)| {
+                    .filter(|(k, p)| {
+                        // Only include criteria for this advancement that are achieved
+                        k.starts_with(&format!("{}:", advancement_id)) && p.achieved
+                    })
+                    .map(|(k, p)| {
                         let parts: Vec<&str> = k.split(':').collect();
+                        let criterion_name = parts.get(1).unwrap_or(&"").to_string();
                         (
-                            parts.first().unwrap_or(&"").to_string(),
-                            Criteria::new(*parts.get(1).unwrap_or(&"")),
+                            advancement_id.to_string(),
+                            Criteria::new(criterion_name),
                         )
                     })
                     .collect();
 
+                // Send progress update
                 self.send_advancement_update(
                     false,
                     &[],
@@ -2532,6 +2594,54 @@ impl Player {
                     &criteria_list,
                 )
                 .await;
+
+                // If advancement is completed, send completion notification
+                if advancement_completed {
+                    // Mark as completed in the manager
+                    server
+                        .data
+                        .advancement_manager
+                        .complete_advancement(&player_id, advancement_id, criterion)
+                        .await;
+                    
+                    // Get advancement data to check if it should be announced
+                    if let Some(adv_data) = server
+                        .data
+                        .advancement_manager
+                        .vanilla
+                        .advancement_map
+                        .get(advancement_id)
+                    {
+                        if let Some(display) = &adv_data.display_data {
+                            // Send toast/notification for completed advancement
+                            let title = TextComponent::text(&display.title);
+                            
+                            self.send_message(&TextComponent::translate(
+                                pumpkin_data::translation::CHAT_TYPE_ADVANCEMENT_CHALLENGE,
+                                [title],
+                            ))
+                            .await;
+                            
+                            // Play sound based on frame type
+                            use pumpkin_data::sound::{Sound, SoundCategory};
+                            let sound = match display.frame_type {
+                                pumpkin_protocol::java::client::play::AdvancementFrameType::Task => Sound::ENTITY_PLAYER_LEVELUP,
+                                pumpkin_protocol::java::client::play::AdvancementFrameType::Goal => Sound::ENTITY_PLAYER_LEVELUP,
+                                pumpkin_protocol::java::client::play::AdvancementFrameType::Challenge => Sound::UI_TOAST_CHALLENGE_COMPLETE,
+                            };
+                            
+                            self.play_sound_event(
+                                SoundEvent::Named(sound.to_string()),
+                                SoundCategory::MASTER,
+                                &self.living_entity.entity.pos.load(),
+                                1.0,
+                                1.0,
+                                0.0,
+                            )
+                            .await;
+                        }
+                    }
+                }
             }
         }
     }

@@ -917,10 +917,24 @@ impl JavaClient {
     #[allow(clippy::unused_async)]
     pub async fn handle_seen_advancements(
         &self,
-        _player: &Arc<Player>,
-        _packet: SSeenAdvancements,
+        player: &Arc<Player>,
+        packet: SSeenAdvancements,
     ) {
-        // Client opened/closed advancement tab; no server action needed.
+        // Action 0 = Opened Tab, Action 1 = Closed Screen
+        if packet.action_id == 0 {
+            // Client opened advancement tab - store the selected tab
+            if let Some(tab_id) = packet.advancement_tab {
+                let server = player.world().server.upgrade().unwrap();
+                let player_id = player.gameprofile.id.to_string();
+                server
+                    .data
+                    .advancement_manager
+                    .set_selected_tab(&player_id, Some(tab_id))
+                    .await;
+            }
+        } else if packet.action_id == 1 {
+            // Client closed advancement screen - no special server action needed
+        }
     }
 
     #[allow(clippy::too_many_lines)]
