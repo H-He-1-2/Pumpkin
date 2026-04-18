@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path};
+use std::{env, fs, path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -8,6 +8,7 @@ const DATA_FOLDER: &str = "data/";
 
 pub mod op;
 
+pub mod advancement;
 pub mod banlist_serializer;
 pub mod banned_ip;
 pub mod banned_player;
@@ -15,12 +16,15 @@ pub mod player_server;
 pub mod usercache;
 pub mod whitelist;
 
+use advancement::AdvancementManager;
+
 pub struct VanillaData {
     pub banned_ip_list: RwLock<banned_ip::BannedIpList>,
     pub banned_player_list: RwLock<banned_player::BannedPlayerList>,
     pub operator_config: RwLock<op::OperatorConfig>,
     pub user_cache: RwLock<usercache::UserCache>,
     pub whitelist_config: RwLock<whitelist::WhitelistConfig>,
+    pub advancement_manager: Arc<AdvancementManager>,
 }
 
 impl VanillaData {
@@ -32,6 +36,7 @@ impl VanillaData {
             operator_config: RwLock::new(op::OperatorConfig::load()),
             user_cache: RwLock::new(usercache::UserCache::load()),
             whitelist_config: RwLock::new(whitelist::WhitelistConfig::load()),
+            advancement_manager: Arc::new(AdvancementManager::new()),
         }
     }
 }

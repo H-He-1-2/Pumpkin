@@ -62,8 +62,8 @@ use pumpkin_protocol::java::server::play::{
     SKeepAlive, SMoveVehicle, SPaddleBoat, SPickItemFromBlock, SPlaceRecipe, SPlayPingRequest,
     SPlayerAbilities, SPlayerAction, SPlayerCommand, SPlayerInput, SPlayerPosition,
     SPlayerPositionRotation, SPlayerRotation, SPlayerSession, SRecipeBookChangeSettings,
-    SRecipeBookSeenRecipe, SSetCommandBlock, SSetCreativeSlot, SSetHeldItem, SSetPlayerGround,
-    SSwingArm, SUpdateSign, SUseItem, SUseItemOn, Status,
+    SRecipeBookSeenRecipe, SSeenAdvancements, SSetCommandBlock, SSetCreativeSlot, SSetHeldItem,
+    SSetPlayerGround, SSwingArm, SUpdateSign, SUseItem, SUseItemOn, Status,
 };
 use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::vector3::Vector3;
@@ -912,6 +912,15 @@ impl JavaClient {
         _packet: SRecipeBookSeenRecipe,
     ) {
         // Client acknowledged a recipe display; no server action needed.
+    }
+
+    #[allow(clippy::unused_async)]
+    pub async fn handle_seen_advancements(
+        &self,
+        _player: &Arc<Player>,
+        _packet: SSeenAdvancements,
+    ) {
+        // Client opened/closed advancement tab; no server action needed.
     }
 
     #[allow(clippy::too_many_lines)]

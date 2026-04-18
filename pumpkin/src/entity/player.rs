@@ -58,11 +58,12 @@ use pumpkin_protocol::java::client::play::{
     CChunkBatchStart, CChunkData, CCloseContainer, CCombatDeath, CCustomPayload,
     CDisguisedChatMessage, CEntityAnimation, CEntityPositionSync, CGameEvent, CKeepAlive,
     COpenScreen, CParticle, CPlayerAbilities, CPlayerInfoUpdate, CPlayerPosition,
-    CPlayerSpawnPosition, CRespawn, CSetContainerContent, CSetContainerProperty, CSetContainerSlot,
-    CSetCursorItem, CSetEquipment, CSetExperience, CSetHealth, CSetPlayerInventory,
-    CSetSelectedSlot, CSoundEffect, CStopSound, CSubtitle, CSystemChatMessage, CTitleAnimation,
-    CTitleText, CUnloadChunk, CUpdateMobEffect, CUpdateTime, GameEvent, Metadata, PlayerAction,
-    PlayerInfoFlags, PreviousMessage,
+    CPlayerSpawnPosition, CRespawn, CSelectAdvancementsTab, CSetContainerContent,
+    CSetContainerProperty, CSetContainerSlot, CSetCursorItem, CSetEquipment, CSetExperience,
+    CSetHealth, CSetPlayerInventory, CSetSelectedSlot, CSoundEffect, CStopSound, CSubtitle,
+    CSystemChatMessage, CTitleAnimation, CTitleText, CUnloadChunk, CUpdateAdvancements,
+    CUpdateMobEffect, CUpdateTime, Criteria, GameEvent, Metadata, PlayerAction, PlayerInfoFlags,
+    PreviousMessage,
 };
 use pumpkin_protocol::java::server::play::SClickSlot;
 use pumpkin_util::math::{
@@ -1522,6 +1523,7 @@ impl Player {
         let chunk_of_chunks = {
             let mut chunk_manager = self.chunk_manager.lock().await;
             chunk_manager.pull_new_chunks();
+
             if let ClientPlatform::Java(_) = self.client {
                 // Java clients can only send a limited amount of chunks per tick.
                 // If we have sent too many chunks without receiving an ack, we stop sending chunks.
@@ -2466,6 +2468,72 @@ impl Player {
         if let ClientPlatform::Java(java) = &self.client {
             java.enqueue_packet(&CCustomPayload::new(channel, data))
                 .await;
+        }
+    }
+
+    pub async fn send_advancement_update(
+        &self,
+        reset: bool,
+        advancements: &[pumpkin_protocol::java::client::play::Advancement],
+        identifiers: &[String],
+        progress: &[(String, pumpkin_protocol::java::client::play::Criteria)],
+    ) {
+        if let ClientPlatform::Java(java) = &self.client {
+            java.enqueue_packet(&CUpdateAdvancements::new(
+                reset,
+                advancements,
+                identifiers,
+                progress,
+            ))
+            .await;
+        }
+    }
+
+    pub async fn send_advancement_tab(&self, tab_id: Option<&str>) {
+        if let ClientPlatform::Java(java) = &self.client {
+            java.enqueue_packet(&CSelectAdvancementsTab::new(tab_id))
+                .await;
+        }
+    }
+
+    pub async fn grant_advancement(&self, advancement_id: &str, criterion: &str) {
+        let server = self.world().server.upgrade().unwrap();
+        let player_id = self.gameprofile.id.to_string();
+
+        if server
+            .data
+            .advancement_manager
+            .grant_criterion(&player_id, advancement_id, criterion)
+            .await
+        {
+            let progress = server
+                .data
+                .advancement_manager
+                .get_player_state(&player_id)
+                .await;
+
+            if let Some(state) = progress {
+                let criteria_list: Vec<(String, Criteria)> = state
+                    .criteria
+                    .iter()
+                    .filter(|(_, p)| p.achieved)
+                    .map(|(k, _)| {
+                        let parts: Vec<&str> = k.split(':').collect();
+                        (
+                            parts.first().unwrap_or(&"").to_string(),
+                            Criteria::new(*parts.get(1).unwrap_or(&"")),
+                        )
+                    })
+                    .collect();
+
+                self.send_advancement_update(
+                    false,
+                    &[],
+                    &[advancement_id.to_string()],
+                    &criteria_list,
+                )
+                .await;
+            }
         }
     }
 

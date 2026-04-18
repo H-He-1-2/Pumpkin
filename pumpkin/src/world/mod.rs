@@ -2068,6 +2068,13 @@ impl World {
         //     }
         // }
 
+        let player_id = player.gameprofile.id.to_string();
+        server
+            .data
+            .advancement_manager
+            .init_player(player_id.clone())
+            .await;
+
         player.has_played_before.store(true, Ordering::Relaxed);
         player
             .on_screen_handler_opened(player.player_screen_handler.clone())
@@ -2169,7 +2176,45 @@ impl World {
 
         player.send_client_information().await;
 
+        // Update chunk position first so the loading range is correct
+        let chunk_center = player.living_entity.entity.chunk_pos.load();
+        let view_distance = chunker::get_view_distance(player);
+        let mut loading_chunks = Vec::new();
+        let mut unloading_chunks = Vec::new();
+
+        // Get initial loading chunks based on player spawn position
+        let view_distance_u8 = std::num::NonZeroU8::new(view_distance.get() as u8).unwrap();
+        let old_cylindrical = pumpkin_world::cylindrical_chunk_iterator::Cylindrical::new(
+            pumpkin_util::math::vector2::Vector2::new(0, 0),
+            view_distance_u8,
+        );
+        let new_cylindrical = pumpkin_world::cylindrical_chunk_iterator::Cylindrical::new(
+            chunk_center,
+            view_distance_u8,
+        );
+        pumpkin_world::cylindrical_chunk_iterator::Cylindrical::for_each_changed_chunk(
+            old_cylindrical,
+            new_cylindrical,
+            &mut loading_chunks,
+            &mut unloading_chunks,
+        );
+
+        // Update chunk loading with correct center and view distance
+        // This loads already-present chunks immediately into the queue
+        {
+            let mut chunk_manager = player.chunk_manager.lock().await;
+            chunk_manager.update_center_and_view_distance(
+                chunk_center,
+                view_distance.into(),
+                &self.level,
+                &loading_chunks,
+                &unloading_chunks,
+            );
+        }
+
+        // Trigger async chunk loading for new chunks (this runs in background)
         chunker::update_position(player).await;
+
         // Update commands
 
         player.set_health(20.0).await;
@@ -2452,9 +2497,11 @@ impl World {
             rel_x * rel_x + rel_z * rel_z
         });
 
+        let chunk_count = chunks.len();
         let mut entity_receiver = self.level.receive_entity_chunks(chunks);
         let level = self.level.clone();
         let world = self.clone();
+
         player.clone().spawn_task(async move {
             'main: loop {
                 let recv_result = tokio::select! {
