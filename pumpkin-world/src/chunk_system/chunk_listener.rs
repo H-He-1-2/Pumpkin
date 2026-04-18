@@ -60,9 +60,8 @@ impl ChunkListener {
             let mut len = global.len();
             while i < len {
                 if matches!(global[i].send((pos, chunk.clone())), Ok(())) {
-                    // log::debug!("global listener {i} send {pos:?}");
+                    // nop
                 } else {
-                    // log::debug!("one global listener dropped");
                     global.remove(i);
                     len -= 1;
                     continue;
